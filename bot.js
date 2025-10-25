@@ -344,45 +344,47 @@ Examples:
 // Handle location messages
 bot.on('message:location', async (ctx) => {
   await ctx.reply('🔍 Finding nearest ATMs...');
-  
+
   const { latitude, longitude } = ctx.message.location;
   console.log(`\n========================================`);
   console.log(`Received location: ${latitude}, ${longitude}`);
   console.log(`========================================`);
- 
-  
+
   try {
     const nearestATMs = await getNearestATMs(latitude, longitude, 5);
-    
+
     if (nearestATMs.length === 0) {
       await ctx.reply('❌ No ATMs found nearby.');
       return;
     }
-    
-    const message = `📍 Here are the 5 nearest ATMs:\n\n${formatATMList(nearestATMs)}`;
-    await ctx.reply(message, {
+
+    const count = nearestATMs.length;
+    await ctx.reply(`📍 Found ${count} nearest ATM${count > 1 ? 's' : ''}:`);
+
+    // Send each ATM in a separate message with location
+    for (const [index, atm] of nearestATMs.entries()) {
+      const message = `#${index + 1}. ${atm.name}\n📏 ${atm.distance.toFixed(2)} km away\n📍 ${atm.lat}, ${atm.lon}`;
+
+      await ctx.reply(message);
+
+      await ctx.replyWithLocation(atm.lat, atm.lon, {
         reply_markup: {
           inline_keyboard: [[
-            { text: '🗺️ View on Map', url: `https://www.google.com/maps?q=${nearestATMs[0].lat},${nearestATMs[0].lon}` }
+            { text: '🗺️ View on Map', url: `https://www.google.com/maps?q=${atm.lat},${atm.lon}` }
           ]]
         }
       });
-    
-    // Send location for first ATM
-    // if (nearestATMs[0]) {
-    //   await ctx.replyWithLocation(nearestATMs[0].lat, nearestATMs[0].lon, {
-    //     reply_markup: {
-    //       inline_keyboard: [[
-    //         { text: '🗺️ View on Map', url: `https://www.google.com/maps?q=${nearestATMs[0].lat},${nearestATMs[0].lon}` }
-    //       ]]
-    //     }
-    //   });
-    // }
+
+      // Optional: avoid hitting rate limits
+      await new Promise(r => setTimeout(r, 500));
+    }
+
   } catch (error) {
     console.error('Error processing location:', error);
     await ctx.reply('❌ An error occurred while searching for ATMs. Please try again.');
   }
 });
+
 
 // Handle text messages
 bot.on('message:text', async (ctx) => {
