@@ -387,52 +387,59 @@ bot.on('message:location', async (ctx) => {
 // Handle text messages
 bot.on('message:text', async (ctx) => {
   const searchText = ctx.message.text.trim();
-  
+
   // Skip if it's a command
   if (searchText.startsWith('/')) return;
-  
+
   console.log(`\n========================================`);
   console.log(`Received text search: "${searchText}"`);
   console.log(`========================================`);
 
   await ctx.reply('🔍 Searching for ATMs...');
-  
+
   try {
     const matchingATMs = findATMsByName(searchText);
-    
+
     if (matchingATMs.length === 0) {
       await ctx.reply(`❌ No ATMs found matching "${searchText}". Please try a different name.`);
       return;
     }
-    
-    // Get ATMs sorted by proximity to the best matched ATM
+
+    // Sort by proximity (limit 5)
     const sortedATMs = await getATMsSortedByProximity(matchingATMs, 5);
-    
+
     if (sortedATMs.length === 0) {
       await ctx.reply(`❌ No ATMs found. Please try again.`);
       return;
     }
-    
-    const matchCount = matchingATMs.length;
-    const message = `🏧 Found a few matching ATM${matchCount > 1 ? 's' : ''}. Here are the closest 5:\n\n${formatATMList(sortedATMs)}`;
-    await ctx.reply(message);
-    
-    // Send location for first ATM
-  //   if (sortedATMs[0]) {
-  //     await ctx.replyWithLocation(sortedATMs[0].lat, sortedATMs[0].lon, {
-  //       reply_markup: {
-  //         inline_keyboard: [[
-  //           { text: '🗺️ View on Map', url: `https://www.google.com/maps?q=${sortedATMs[0].lat},${sortedATMs[0].lon}` }
-  //         ]]
-  //       }
-  //     });
-  //   }
-  // } catch (error) {
-  //   console.error('Error processing text search:', error);
-  //   await ctx.reply('❌ An error occurred while searching for ATMs. Please try again.');
-  // }
-});
 
+    const matchCount = sortedATMs.length;
+    await ctx.reply(`🏧 Found ${matchCount} matching ATM${matchCount > 1 ? 's' : ''}.`);
+
+    // Send each ATM as a separate message
+    for (const [index, atm] of sortedATMs.entries()) {
+      const message = `#${index + 1}. ${atm.name}\n📍 ${atm.lat}, ${atm.lon}\n📏 ${atm.distance.toFixed(2)} km away`;
+
+      await ctx.reply(message);
+      
+      // Send location message
+      await ctx.replyWithLocation(atm.lat, atm.lon, {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🗺️ View on Map', url: `https://www.google.com/maps?q=${atm.lat},${atm.lon}` }
+          ]]
+        }
+      });
+
+      // Optional: small delay to prevent flood limit
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+  } catch (error) {
+    console.error('Error processing text search:', error);
+    await ctx.reply('❌ An error occurred while searching for ATMs. Please try again.');
+  }
+});
 // Error handling
 bot.catch((err) => {
   console.error('Bot error:', err);
