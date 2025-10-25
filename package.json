@@ -1,0 +1,28 @@
+
+{
+  "name": "atm-locator-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot to locate ATMs using Gebeta Maps API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "atm",
+    "gebeta-maps"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "grammy": "^1.30.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
