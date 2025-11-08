@@ -3,12 +3,11 @@ require('dotenv').config();
 const { Bot, session, InlineKeyboard } = require('grammy');
 const fs = require('fs');
 const https = require('https');
-
+const fuzzy = require('fuzzy');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GEBETA_API_KEY = process.env.GEBETA_API_KEY;
 const GEBETA_BASE_URL = process.env.GEBETA_BASE_URL;
-
 
 const path = require('path');
 
@@ -33,10 +32,8 @@ console.log = function (...args) {
   originalLog.apply(console, args);
 };
 
-// Example usage
 console.log("logging started");
 
-// Example: initialize your bot
 const bot = new Bot(BOT_TOKEN);
 
 // Load ATMs from CSV
@@ -68,20 +65,6 @@ bot.use(session({
   initial: () => ({ waitingFor: null })
 }));
 
-// Normalize text for fuzzy matching
-function normalizeText(text) {
-  let normalized = text
-    .toLowerCase()
-    .replace(/iya/gi, 'ia') // iya and ia are the same (do this first)
-    .replace(/[aeiou]/gi, '') // Remove vowels
-    .replace(/t/gi, 'x') // T and X are same - normalize to x
-    .replace(/k/gi, 'q') // K and Q are same - normalize to q
-    .replace(/\s+/g, ''); // Remove spaces
-  
-  console.log(`Normalized "${text}" to "${normalized}"`);
-  return normalized;
-}
-
 // Extract name after dash
 function extractNameAfterDash(fullName) {
   const parts = fullName.split('-');
@@ -90,70 +73,52 @@ function extractNameAfterDash(fullName) {
   return extracted;
 }
 
-// Calculate similarity score
-function getSimilarityScore(str1, str2) {
-  const norm1 = normalizeText(str1);
-  const norm2 = normalizeText(str2);
+// Normalize text for fuzzy matching (for preprocessing before fuzzy.filter)
+function normalizeText(text) {
+  let normalized = text
+    .toLowerCase()
+    .replace(/iya/gi, 'ia')
+    .replace(/[aeiou]/gi, '')
+    .replace(/t/gi, 'x')
+    .replace(/k/gi, 'q')
+    .replace(/\s+/g, '');
   
-  // Exact match
-  if (norm1 === norm2) return 1.0;
-  
-  // Check if one contains the other
-  if (norm1.includes(norm2) || norm2.includes(norm1)) {
-    return 0.8;
-  }
-  
-  // Levenshtein distance for fuzzy matching
-  const m = norm1.length;
-  const n = norm2.length;
-  
-  if (m === 0) return n === 0 ? 1 : 0;
-  if (n === 0) return 0;
-  
-  const dp = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
-  
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-  
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (norm1[i - 1] === norm2[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1];
-      } else {
-        dp[i][j] = Math.min(
-          dp[i - 1][j] + 1,
-          dp[i][j - 1] + 1,
-          dp[i - 1][j - 1] + 1
-        );
-      }
-    }
-  }
-  
-  const maxLen = Math.max(m, n);
-  const similarity = 1 - (dp[m][n] / maxLen);
-  console.log(`Similarity between "${str1}" and "${str2}": ${similarity.toFixed(2)}`);
-  return similarity;
+  console.log(`Normalized "${text}" to "${normalized}"`);
+  return normalized;
 }
 
-// finding atm matches by name
+// Finding ATM matches by name using fuzzy npm package
 function findATMsByName(searchName) {
   console.log(`\n=== Searching for ATMs matching: "${searchName}" ===`);
   
-  const matches = atms.map(atm => {
-    const atmName = extractNameAfterDash(atm.name);
-    const score = getSimilarityScore(searchName, atmName);
-    return { ...atm, score };
+  // Prepare ATM names for fuzzy search
+  const atmNames = atms.map(atm => ({
+    original: atm,
+    searchString: extractNameAfterDash(atm.name)
+  }));
+  
+  // Use fuzzy matching with pre-processing
+  const options = {
+    pre: '<',
+    post: '>',
+    extract: (el) => normalizeText(el.searchString)
+  };
+  
+  const normalizedSearch = normalizeText(searchName);
+  const results = fuzzy.filter(normalizedSearch, atmNames, options);
+  
+  // Map results back to ATM objects with scores
+  const matches = results.map(result => ({
+    ...result.original.original,
+    score: result.score
+  }));
+  
+  console.log(`Found ${matches.length} matching ATMs using fuzzy search`);
+  matches.slice(0, 5).forEach((atm, idx) => {
+    console.log(`${idx + 1}. ${atm.name} (score: ${atm.score})`);
   });
   
-  const filtered = matches.filter(m => m.score > 0.3); // Lower threshold for better results
-  const sorted = filtered.sort((a, b) => b.score - a.score);
-  
-  console.log(`Found ${sorted.length} matching ATMs`);
-  sorted.slice(0, 5).forEach((atm, idx) => {
-    console.log(`${idx + 1}. ${atm.name} (score: ${atm.score.toFixed(2)})`);
-  });
-  
-  return sorted;
+  return matches;
 }
 
 // Calculate distance between two points (Haversine formula)
@@ -169,20 +134,17 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
 }
 
 // Make API request to Gebeta Maps using One-to-Many
-function gebetaOneToMany(originLon, originLat, destinations) {
+function gebetaOneToMany(originLat, originLon, destinations) {
   return new Promise((resolve, reject) => {
-    // Build the destinations parameter
-    const destCoords = destinations.map(d => `${d.lon},${d.lat}`).join(';');
-    const url = `${GEBETA_BASE_URL}/api/v1/route/onm?origin=${originLon},${originLat}&destinations=${destCoords}`;
+    // Build the destinations parameter - semicolon separated lat,lon pairs
+    const destCoords = destinations.map(d => `{${d.lat},${d.lon}}`).join(',');
+    const jsonParam = `[${destCoords}]`;
     
+    const url = `${GEBETA_BASE_URL}/api/route/onm?origin={${originLat},${originLon}}&json=${jsonParam}&apiKey=${GEBETA_API_KEY}`;
+
     console.log(`Calling Gebeta API: ${url}`);
     
-    https.get(url, {
-      headers: {
-        'Authorization': `Bearer ${GEBETA_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    }, (res) => {
+    https.get(url, (res) => {
       let data = '';
       
       res.on('data', chunk => data += chunk);
@@ -196,7 +158,7 @@ function gebetaOneToMany(originLon, originLat, destinations) {
         
         try {
           const parsed = JSON.parse(data);
-          console.log(`Gebeta API Success:`, JSON.stringify(parsed).substring(0, 200));
+          console.log(`Gebeta API Success:`, JSON.stringify(parsed).substring(0, 2000));
           resolve(parsed);
         } catch (e) {
           console.error('Failed to parse Gebeta response:', e);
@@ -210,42 +172,12 @@ function gebetaOneToMany(originLon, originLat, destinations) {
   });
 }
 
-// Get nearest ATMs using Gebeta One-to-Many API or fallback
-async function getNearestATMs(userLat, userLon, limit = 5) {
+// Get nearest ATMs - first 10 by Haversine, then best 5 via Gebeta API
+async function getNearestATMs(userLat, userLon) {
   console.log(`\n=== Finding nearest ATMs to location: ${userLat}, ${userLon} ===`);
   
-  try {
-    // Try using Gebeta Maps One-to-Many API
-    const response = await gebetaOneToMany(userLon, userLat, atms);
-    
-    if (response && response.routes && Array.isArray(response.routes)) {
-      console.log(`Gebeta returned ${response.routes.length} routes`);
-      
-      // Map distances from API response
-      const withDistances = atms.map((atm, idx) => {
-        const route = response.routes[idx];
-        const distance = route && route.distance ? route.distance / 1000 : 9999; // Convert m to km
-        return {
-          ...atm,
-          distance: distance,
-          duration: route && route.duration ? route.duration : null
-        };
-      });
-      
-      const sorted = withDistances.sort((a, b) => a.distance - b.distance).slice(0, limit);
-      console.log('Sorted ATMs by API distance:');
-      sorted.forEach((atm, idx) => {
-        console.log(`${idx + 1}. ${atm.name} - ${atm.distance.toFixed(2)} km`);
-      });
-      
-      return sorted;
-    }
-  } catch (error) {
-    console.error('Gebeta API error, using fallback:', error.message);
-  }
-  
-  // Fallback to Haversine distance calculation
-  console.log('Using Haversine distance calculation (fallback)');
+  // Step 1: Calculate Haversine distance for all ATMs
+  console.log('Step 1: Calculating Haversine distances for all ATMs');
   const withDistances = atms.map(atm => {
     const distance = calculateDistance(userLat, userLon, atm.lat, atm.lon);
     return {
@@ -254,17 +186,63 @@ async function getNearestATMs(userLat, userLon, limit = 5) {
     };
   });
   
-  const sorted = withDistances.sort((a, b) => a.distance - b.distance).slice(0, limit);
-  console.log('Sorted ATMs by Haversine distance:');
-  sorted.forEach((atm, idx) => {
+  // Step 2: Get 10 closest ATMs by Haversine
+  const closest10 = withDistances
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 10);
+  
+  console.log('Step 2: Top 10 closest ATMs by Haversine:');
+  closest10.forEach((atm, idx) => {
     console.log(`${idx + 1}. ${atm.name} - ${atm.distance.toFixed(2)} km`);
   });
   
-  return sorted;
+  try {
+    // Step 3: Use Gebeta API to find best 5 from the 10 closest
+    console.log('Step 3: Using Gebeta API to find best 5 routes');
+    const response = await gebetaOneToMany(userLat, userLon, closest10);
+    
+    if (response && response.routes && Array.isArray(response.routes)) {
+      console.log(`Gebeta returned ${response.routes.length} routes`);
+      
+      // Map API distances to ATMs
+      const withApiDistances = closest10.map((atm, idx) => {
+        const route = response.routes[idx];
+        const distance = route && route.distance ? route.distance / 1000 : atm.distance;
+        const duration = route && route.duration ? route.duration : null;
+        return {
+          ...atm,
+          apiDistance: distance,
+          duration: duration,
+          haversineDistance: atm.distance
+        };
+      });
+      
+      // Sort by API distance and get top 5
+      const best5 = withApiDistances
+        .sort((a, b) => a.apiDistance - b.apiDistance)
+        .slice(0, 5);
+      
+      console.log('Step 4: Best 5 ATMs by Gebeta API distance:');
+      best5.forEach((atm, idx) => {
+        console.log(`${idx + 1}. ${atm.name} - ${atm.apiDistance.toFixed(2)} km (API), ${atm.haversineDistance.toFixed(2)} km (Haversine)`);
+      });
+      
+      return best5.map(atm => ({
+        ...atm,
+        distance: atm.apiDistance // Use API distance for display
+      }));
+    }
+  } catch (error) {
+    console.error('Gebeta API error, returning top 5 from Haversine:', error.message);
+  }
+  
+  // Fallback: return top 5 from Haversine if API fails
+  console.log('Fallback: Returning top 5 from Haversine calculation');
+  return closest10.slice(0, 5);
 }
 
 // Get ATMs sorted by proximity to a reference ATM
-async function getATMsSortedByProximity(referenceATMs, limit = 5) {
+async function getATMsSortedByProximity(referenceATMs) {
   if (referenceATMs.length === 0) {
     console.log('No reference ATMs provided');
     return [];
@@ -274,7 +252,8 @@ async function getATMsSortedByProximity(referenceATMs, limit = 5) {
   const refATM = referenceATMs[0];
   console.log(`\n=== Sorting ATMs by proximity to: ${refATM.name} ===`);
   
-  // Calculate distances from reference ATM to all ATMs
+  // Step 1: Calculate Haversine distances from reference ATM
+  console.log('Step 1: Calculating Haversine distances from reference ATM');
   const withDistances = atms.map(atm => {
     const distance = calculateDistance(refATM.lat, refATM.lon, atm.lat, atm.lon);
     return {
@@ -283,23 +262,52 @@ async function getATMsSortedByProximity(referenceATMs, limit = 5) {
     };
   });
   
-  const sorted = withDistances.sort((a, b) => a.distance - b.distance).slice(0, limit);
-  console.log('Sorted ATMs:');
-  sorted.forEach((atm, idx) => {
-    console.log(`${idx + 1}. ${atm.name} - ${atm.distance.toFixed(2)} km from ${refATM.name}`);
+  // Step 2: Get 10 closest ATMs
+  const closest10 = withDistances
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 10);
+  
+  console.log('Step 2: Top 10 closest ATMs by Haversine:');
+  closest10.forEach((atm, idx) => {
+    console.log(`${idx + 1}. ${atm.name} - ${atm.distance.toFixed(2)} km`);
   });
   
-  return sorted;
-}
-
-// Format ATM list for display
-function formatATMList(atmList, showDistance = true) {
-  return atmList.map((atm, idx) => {
-    const distanceStr = showDistance && atm.distance !== undefined 
-      ? ` - ${atm.distance.toFixed(2)} km away` 
-      : '';
-    return `${idx + 1}. ${atm.name}${distanceStr}\n   📍 ${atm.lat}, ${atm.lon}`;
-  }).join('\n\n');
+  try {
+    // Step 3: Use Gebeta API to find best 5
+    console.log('Step 3: Using Gebeta API to find best 5 routes');
+    const response = await gebetaOneToMany(refATM.lat, refATM.lon, closest10);
+    
+    if (response && response.routes && Array.isArray(response.routes)) {
+      const withApiDistances = closest10.map((atm, idx) => {
+        const route = response.routes[idx];
+        const distance = route && route.distance ? route.distance / 1000 : atm.distance;
+        return {
+          ...atm,
+          apiDistance: distance,
+          haversineDistance: atm.distance
+        };
+      });
+      
+      const best5 = withApiDistances
+        .sort((a, b) => a.apiDistance - b.apiDistance)
+        .slice(0, 5);
+      
+      console.log('Step 4: Best 5 ATMs by Gebeta API:');
+      best5.forEach((atm, idx) => {
+        console.log(`${idx + 1}. ${atm.name} - ${atm.apiDistance.toFixed(2)} km`);
+      });
+      
+      return best5.map(atm => ({
+        ...atm,
+        distance: atm.apiDistance
+      }));
+    }
+  } catch (error) {
+    console.error('Gebeta API error, using Haversine fallback:', error.message);
+  }
+  
+  // Fallback
+  return closest10.slice(0, 5);
 }
 
 // Command handlers
@@ -351,7 +359,7 @@ bot.on('message:location', async (ctx) => {
   console.log(`========================================`);
 
   try {
-    const nearestATMs = await getNearestATMs(latitude, longitude, 5);
+    const nearestATMs = await getNearestATMs(latitude, longitude);
 
     if (nearestATMs.length === 0) {
       await ctx.reply('❌ No ATMs found nearby.');
@@ -375,7 +383,6 @@ bot.on('message:location', async (ctx) => {
         }
       });
 
-      // Optional: avoid hitting rate limits
       await new Promise(r => setTimeout(r, 500));
     }
 
@@ -385,12 +392,10 @@ bot.on('message:location', async (ctx) => {
   }
 });
 
-
 // Handle text messages
 bot.on('message:text', async (ctx) => {
   const searchText = ctx.message.text.trim();
 
-  // Skip if it's a command
   if (searchText.startsWith('/')) return;
 
   console.log(`\n========================================`);
@@ -407,8 +412,7 @@ bot.on('message:text', async (ctx) => {
       return;
     }
 
-    // Sort by proximity (limit 5)
-    const sortedATMs = await getATMsSortedByProximity(matchingATMs, 5);
+    const sortedATMs = await getATMsSortedByProximity(matchingATMs);
 
     if (sortedATMs.length === 0) {
       await ctx.reply(`❌ No ATMs found. Please try again.`);
@@ -418,13 +422,11 @@ bot.on('message:text', async (ctx) => {
     const matchCount = sortedATMs.length;
     await ctx.reply(`🏧 Found ${matchCount} matching ATM${matchCount > 1 ? 's' : ''}.`);
 
-    // Send each ATM as a separate message
     for (const [index, atm] of sortedATMs.entries()) {
       const message = `#${index + 1}. ${atm.name}\n📍 ${atm.lat}, ${atm.lon}\n📏 ${atm.distance.toFixed(2)} km away`;
 
       await ctx.reply(message);
       
-      // Send location message
       await ctx.replyWithLocation(atm.lat, atm.lon, {
         reply_markup: {
           inline_keyboard: [[
@@ -433,7 +435,6 @@ bot.on('message:text', async (ctx) => {
         }
       });
 
-      // Optional: small delay to prevent flood limit
       await new Promise(r => setTimeout(r, 500));
     }
 
@@ -442,6 +443,7 @@ bot.on('message:text', async (ctx) => {
     await ctx.reply('❌ An error occurred while searching for ATMs. Please try again.');
   }
 });
+
 // Error handling
 bot.catch((err) => {
   console.error('Bot error:', err);
