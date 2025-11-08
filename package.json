@@ -1,6 +1,6 @@
 {
   "name": "atm-locator-bot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Telegram bot to locate ATMs using Gebeta Maps API",
   "main": "index.js",
   "scripts": {
