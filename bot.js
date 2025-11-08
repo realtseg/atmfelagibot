@@ -136,7 +136,7 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
 // Make API request to Gebeta Maps using One-to-Many
 function gebetaOneToMany(originLat, originLon, destinations) {
   return new Promise((resolve, reject) => {
-    // Build the destinations parameter - semicolon separated lat,lon pairs
+    // Build the destinations parameter - curly braces with comma separation
     const destCoords = destinations.map(d => `{${d.lat},${d.lon}}`).join(',');
     const jsonParam = `[${destCoords}]`;
     
@@ -201,14 +201,17 @@ async function getNearestATMs(userLat, userLon) {
     console.log('Step 3: Using Gebeta API to find best 5 routes');
     const response = await gebetaOneToMany(userLat, userLon, closest10);
     
-    if (response && response.routes && Array.isArray(response.routes)) {
-      console.log(`Gebeta returned ${response.routes.length} routes`);
+    if (response && response.origin_to_destination && Array.isArray(response.origin_to_destination)) {
+      console.log(`Gebeta returned ${response.origin_to_destination.length} routes`);
       
       // Map API distances to ATMs
+      // Note: origin_to_destination[0] is origin to origin (distance 0)
+      // origin_to_destination[1] corresponds to closest10[0], etc.
       const withApiDistances = closest10.map((atm, idx) => {
-        const route = response.routes[idx];
-        const distance = route && route.distance ? route.distance / 1000 : atm.distance;
-        const duration = route && route.duration ? route.duration : null;
+        // idx + 1 because origin_to_destination includes origin-to-origin at index 0
+        const routeData = response.origin_to_destination[idx + 1];
+        const distance = routeData && routeData.distance !== undefined ? routeData.distance : atm.distance;
+        const duration = routeData && routeData.time !== undefined ? routeData.time : null;
         return {
           ...atm,
           apiDistance: distance,
@@ -277,13 +280,17 @@ async function getATMsSortedByProximity(referenceATMs) {
     console.log('Step 3: Using Gebeta API to find best 5 routes');
     const response = await gebetaOneToMany(refATM.lat, refATM.lon, closest10);
     
-    if (response && response.routes && Array.isArray(response.routes)) {
+    if (response && response.origin_to_destination && Array.isArray(response.origin_to_destination)) {
+      // Map API distances to ATMs
+      // origin_to_destination[0] is origin to origin, [1] corresponds to closest10[0], etc.
       const withApiDistances = closest10.map((atm, idx) => {
-        const route = response.routes[idx];
-        const distance = route && route.distance ? route.distance / 1000 : atm.distance;
+        const routeData = response.origin_to_destination[idx + 1];
+        const distance = routeData && routeData.distance !== undefined ? routeData.distance : atm.distance;
+        const duration = routeData && routeData.time !== undefined ? routeData.time : null;
         return {
           ...atm,
           apiDistance: distance,
+          duration: duration,
           haversineDistance: atm.distance
         };
       });
@@ -313,15 +320,15 @@ async function getATMsSortedByProximity(referenceATMs) {
 // Command handlers
 bot.command('start', async (ctx) => {
   const welcomeMessage = `
-🏧 Welcome to ATM Locator Bot!
+🏧 Welcome to Hawassa ATM Locator Bot!
 
 I can help you find the nearest ATMs.
 
 Please choose how you'd like to search:
 • Share your 📍 location to find nearby ATMs
-• Type an ATM name to search by name
+• Type an the name of your hood to search by name
 
-Example: "Piasa" or "atote"
+Example: "Piasa" "Atote" "Arab Sefer"
   `;
   
   await ctx.reply(welcomeMessage.trim());
