@@ -379,7 +379,8 @@ bot.on('message:location', async (ctx) => {
     // Send each ATM in a separate message with location
     for (const [index, atm] of nearestATMs.entries()) {
       const message = `#${index + 1}. ${atm.name}\n📏 ${atm.distance.toFixed(2)} km away\n📍 ${atm.lat}, ${atm.lon}`;
-
+      const message2 = `#${index + 1}. ${atm.name}\n📏 ${atm.distance.toFixed(2)} km away\n📍 ${atm.lat}, ${atm.lon}`;
+    
       await ctx.reply(message);
 
       await ctx.replyWithLocation(atm.lat, atm.lon, {
@@ -430,7 +431,7 @@ bot.on('message:text', async (ctx) => {
     await ctx.reply(`🏧 Found ${matchCount} matching ATM${matchCount > 1 ? 's' : ''}.`);
 
     for (const [index, atm] of sortedATMs.entries()) {
-      const message = `#${index + 1}. ${atm.name}\n📍 ${atm.lat}, ${atm.lon}\n📏 ${atm.distance.toFixed(2)} km away`;
+      const message = `#${index + 1}. ${atm.name}\n📍 ${atm.lat}, ${atm.lon}\n `;
 
       await ctx.reply(message);
       
