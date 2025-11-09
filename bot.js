@@ -379,7 +379,7 @@ bot.on('message:location', async (ctx) => {
     // Send each ATM in a separate message with location
     for (const [index, atm] of nearestATMs.entries()) {
       const message = `#${index + 1}. ${atm.name}\n📏 ${atm.distance.toFixed(2)} km away\n📍 ${atm.lat}, ${atm.lon}`;
-      const message2 = `#${index + 1}. ${atm.name}\n📏 ${atm.distance.toFixed(2)} km away\n📍 ${atm.lat}, ${atm.lon}`;
+      // const message2 = `#${index + 1}. ${atm.name}\n📏 ${atm.distance.toFixed(2)} km away\n📍 ${atm.lat}, ${atm.lon}`;
     
       await ctx.reply(message);
 
